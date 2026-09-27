@@ -1394,6 +1394,11 @@
           saveLocal();
           renderCalList();
           render();
+        } else {
+          DEFAULT_CALENDARS.forEach(cal => {
+            db.collection('calendars').doc(cal.id).set(cleanForFirestore(cal))
+              .catch(e => console.warn('Could not seed default calendars:', e));
+          });
         }
       }, err => {
         console.warn(err);
@@ -1422,22 +1427,39 @@
   }
 
   // --- 7. EVENT ACTIONS ---
+  function cleanForFirestore(obj) {
+    const clean = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        clean[key] = value;
+      }
+    }
+    return clean;
+  }
+
   function saveEventData(data) {
     if (data.id) {
       const idx = events.findIndex(e => e.id === data.id);
+      const updatedEv = { ...(idx !== -1 ? events[idx] : {}), ...data, updatedAt: Date.now() };
       if (idx !== -1) {
-        events[idx] = { ...events[idx], ...data, updatedAt: Date.now() };
+        events[idx] = updatedEv;
+      } else {
+        events.push(updatedEv);
       }
       if (isConfigured && db) {
-        db.collection('events').doc(data.id).set(events[idx], { merge: true });
+        db.collection('events').doc(data.id).set(cleanForFirestore(updatedEv), { merge: true })
+          .catch(err => console.error('Firestore update error:', err));
       }
       showToast('Event updated');
     } else {
       const id = 'ev_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
-      const newEv = { id, createdAt: Date.now(), ...data };
+      const cleanData = { ...data };
+      delete cleanData.id;
+      const newEv = { ...cleanData, id, createdAt: Date.now() };
       events.push(newEv);
       if (isConfigured && db) {
-        db.collection('events').doc(id).set(newEv);
+        db.collection('events').doc(id).set(cleanForFirestore(newEv))
+          .catch(err => console.error('Firestore create error:', err));
       }
       showToast('Event added');
     }
@@ -1446,9 +1468,11 @@
   }
 
   function removeEvent(id) {
+    if (!id) return;
     events = events.filter(e => e.id !== id);
     if (isConfigured && db) {
-      db.collection('events').doc(id).delete();
+      db.collection('events').doc(id).delete()
+        .catch(err => console.error('Firestore delete error:', err));
     }
     saveLocal();
     render();
@@ -1461,7 +1485,8 @@
     calendars.push(newCal);
     visibleCalIds.add(id);
     if (isConfigured && db) {
-      db.collection('calendars').doc(id).set(newCal);
+      db.collection('calendars').doc(id).set(cleanForFirestore(newCal))
+        .catch(err => console.error('Firestore calendar error:', err));
     }
     saveLocal();
     renderCalList();
@@ -2284,8 +2309,7 @@
     if (!title) return;
 
     const allDay = eventAllDay.checked;
-    saveEventData({
-      id: eventId.value || undefined,
+    const payload = {
       title,
       calId: eventCal.value,
       date: eventDate.value,
@@ -2294,7 +2318,11 @@
       endTime: allDay ? '' : eventEnd.value,
       location: eventLocation.value.trim(),
       notes: eventNotes.value.trim()
-    });
+    };
+    if (eventId.value) {
+      payload.id = eventId.value;
+    }
+    saveEventData(payload);
 
     closeEventModal();
   });
